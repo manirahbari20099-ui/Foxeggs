@@ -1,4 +1,4 @@
-name: Build Fox Eggs Android
+name: Build Fox Eggs Android (Full Debug)
 
 on:
   workflow_dispatch:
@@ -56,10 +56,8 @@ jobs:
       - name: Prepare game
         run: |
           test -f index.html
-
           rm -rf www
           mkdir -p www
-
           cp index.html www/index.html
 
 
@@ -110,6 +108,15 @@ jobs:
 
 
       # =========================================
+      # Init Capacitor
+      # =========================================
+
+      - name: Init Capacitor
+        run: |
+          npx cap init FoxEggs com.foxeggs.game --web-dir=www
+
+
+      # =========================================
       # Create Android project
       # =========================================
 
@@ -143,44 +150,7 @@ jobs:
 
 
       # =========================================
-      # Load SAME KEYSTORE
-      # =========================================
-
-      - name: Load existing keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-
-          echo "$KEYSTORE_BASE64" | base64 --decode > FoxEggs.keystore
-
-          test -s FoxEggs.keystore
-
-          cp FoxEggs.keystore android/app/FoxEggs.keystore
-
-          echo "Keystore loaded successfully."
-
-
-      # =========================================
-      # Configure signing properties
-      # =========================================
-
-      - name: Configure signing properties
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: |
-
-          cat >> android/gradle.properties <<EOF
-
-          FOXEGGS_KEYSTORE_FILE=FoxEggs.keystore
-          FOXEGGS_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}
-          FOXEGGS_KEY_ALIAS=foxeggs
-          FOXEGGS_KEY_PASSWORD=${KEYSTORE_PASSWORD}
-
-          EOF
-
-
-      # =========================================
-      # Configure Capacitor generated Gradle
+      # Configure Android Gradle (Debug)
       # =========================================
 
       - name: Configure Android Gradle
@@ -246,86 +216,17 @@ jobs:
 
 
           # -----------------------------------------
-          # Remove old signingConfigs if present
-          # -----------------------------------------
-
-          text = re.sub(
-              r'\n\s*signingConfigs\s*\{.*?\n\s*\}\s*(?=\n\s*buildTypes)',
-              '',
-              text,
-              flags=re.S
-          )
-
-
-          # -----------------------------------------
-          # Add signingConfigs BEFORE buildTypes
-          # -----------------------------------------
-
-          signing_block = '''
-              signingConfigs {
-                  release {
-                      storeFile file(FOXEGGS_KEYSTORE_FILE)
-                      storePassword FOXEGGS_KEYSTORE_PASSWORD
-                      keyAlias FOXEGGS_KEY_ALIAS
-                      keyPassword FOXEGGS_KEY_PASSWORD
-                      v1SigningEnabled true
-                      v2SigningEnabled true
-                  }
-              }
-
-          '''
-
-
-          if "signingConfigs {" not in text:
-
-              text = text.replace(
-                  "    buildTypes {",
-                  signing_block + "    buildTypes {",
-                  1
-              )
-
-
-          # -----------------------------------------
-          # Add signingConfig ONLY inside
-          # buildTypes -> release
-          # -----------------------------------------
-
-          pattern = (
-              r'(buildTypes\s*\{\s*'
-              r'release\s*\{)'
-          )
-
-          replacement = (
-              r'\1\n'
-              r'            signingConfig signingConfigs.release'
-          )
-
-          if "signingConfig signingConfigs.release" not in text:
-
-              text = re.sub(
-                  pattern,
-                  replacement,
-                  text,
-                  count=1,
-                  flags=re.S
-              )
-
-
-          # -----------------------------------------
           # Disable minification
           # -----------------------------------------
 
           if "minifyEnabled" in text:
-
               text = re.sub(
                   r'minifyEnabled\s+\w+',
                   'minifyEnabled false',
                   text,
                   count=1
               )
-
           else:
-
               text = text.replace(
                   "release {",
                   "release {\n            minifyEnabled false",
@@ -672,39 +573,10 @@ jobs:
 
 
       # =========================================
-      # Verify package and signing
+      # Build Debug APK
       # =========================================
 
-      - name: Verify configuration
-        run: |
-
-          echo "=========================================="
-          echo "FOX EGGS CONFIGURATION"
-          echo "=========================================="
-
-          echo ""
-          echo "APPLICATION ID:"
-          grep "applicationId" android/app/build.gradle
-
-          echo ""
-          echo "VERSION:"
-          grep "versionCode" android/app/build.gradle
-          grep "versionName" android/app/build.gradle
-
-          echo ""
-          echo "COMPILE SDK:"
-          grep "compileSdk" android/app/build.gradle
-
-          echo ""
-          echo "SIGNING:"
-          grep -A10 "signingConfigs" android/app/build.gradle
-
-
-      # =========================================
-      # Build APK
-      # =========================================
-
-      - name: Build Release APK
+      - name: Build Debug APK
         working-directory: android
         run: |
 
@@ -712,88 +584,21 @@ jobs:
 
           ./gradlew clean
 
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleDebug --no-daemon
 
 
       # =========================================
-      # Inspect APK
+      # Rename APK
       # =========================================
 
-      - name: Inspect APK
-        run: |
-
-          APK="android/app/build/outputs/apk/release/app-release.apk"
-
-          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
-
-          AAPT="$ANDROID_HOME/build-tools/$BUILD_TOOLS/aapt"
-
-          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner"
-
-
-          echo "=========================================="
-          echo "FOX EGGS APK"
-          echo "=========================================="
-
-
-          echo ""
-          echo "APK FILE:"
-          ls -lh "$APK"
-
-
-          echo ""
-          echo "SHA256:"
-          sha256sum "$APK"
-
-
-          echo ""
-          echo "PACKAGE / VERSION:"
-          "$AAPT" dump badging "$APK" | head -n 20
-
-
-          echo ""
-          echo "PERMISSIONS:"
-          "$AAPT" dump permissions "$APK"
-
-
-          echo ""
-          echo "SIGNATURE:"
-          "$APKSIGNER" verify \
-            --verbose \
-            --print-certs \
-            "$APK"
-
-
-      # =========================================
-      # Build AAB
-      # =========================================
-
-      - name: Build Release AAB
-        working-directory: android
-        run: |
-
-          ./gradlew bundleRelease --no-daemon
-
-
-      # =========================================
-      # Prepare release files
-      # =========================================
-
-      - name: Prepare release
+      - name: Rename APK
         run: |
 
           mkdir -p release
 
-
           cp \
-            android/app/build/outputs/apk/release/app-release.apk \
-            release/FoxEggs.apk
-
-
-          cp \
-            android/app/build/outputs/bundle/release/app-release.aab \
-            release/FoxEggs.aab
-
+            android/app/build/outputs/apk/debug/app-debug.apk \
+            release/FoxEggs-Debug.apk
 
           cp \
             fox-eggs-icon.png \
@@ -807,19 +612,6 @@ jobs:
       - name: Upload Fox Eggs Release
         uses: actions/upload-artifact@v4
         with:
-          name: FoxEggs-Release
+          name: FoxEggs-Debug
           path: release/
           if-no-files-found: error
-
-
-      # =========================================
-      # Cleanup
-      # =========================================
-
-      - name: Cleanup
-        if: always()
-        run: |
-
-          rm -f FoxEggs.keystore
-
-          rm -f android/app/FoxEggs.keystore
